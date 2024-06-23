@@ -2,7 +2,7 @@ blueprint:
   name: TRV Calibration utility with optional emergency and overheat protection.
   description: Notice - Notifcation channel is hardcoded right now (notify_telegrams)
   domain: automation
-  source_url: https://mldytech.org
+  source_url: https://github.com/mldytech/smarthome/blob/main/hass-blueprints/calibration-with-emergency.yaml
   input:
     trv:
       name: Thermostat

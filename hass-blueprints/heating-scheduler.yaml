@@ -2,7 +2,7 @@ blueprint:
   name: Advanced heating scheduler
   description: Advanced heating schedule with weekdays and comfort / presence checkers
   domain: automation
-  source_url: https://mldytech.org
+  source_url: https://github.com/mldytech/smarthome/blob/main/hass-blueprints/heating-scheduler.yaml
   input:
     climate_entity:
       name: Climate Entity

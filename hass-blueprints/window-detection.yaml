@@ -2,7 +2,7 @@ blueprint:
   name: Window and emergency detection
   description: TBD
   domain: automation
-  source_url: https://mldytech.org
+  source_url: https://github.com/mldytech/smarthome/blob/main/hass-blueprints/window-detection.yaml
 
   input:
     trv:
