@@ -1,0 +1,219 @@
+blueprint:
+  name: TRV Calibration utility with optional emergency and overheat protection.
+  description: Notice - Notifcation channel is hardcoded right now (notify_telegrams)
+  domain: automation
+  source_url: https://mldytech.org
+  input:
+    trv:
+      name: Thermostat
+      selector:
+        entity:
+          domain:
+            - climate
+          multiple: false
+    temperature_sensor:
+      name: Temperature Sensor
+      description: Sensor used to calibrate the trv
+      selector:
+        entity:
+          domain:
+            - sensor
+          device_class:
+            - temperature
+          multiple: false
+    trv_calibration_number:
+      name: Thermostat Calibration entity
+      description: If this does not exist, your trv might not support this function.
+      selector:
+        entity:
+          domain:
+            - number
+          device_class:
+            - temperature
+          multiple: false
+    accuracy:
+      name: Accuracy of the calibration
+      description:
+        The accuracy of the calibration - the max. allowed temperature
+        difference before adapting the calibration. Note that setting a lower value
+        means more traffic to the TRV and therefore worse battery life. Recommended
+        is a value of 0.2.
+      default: 0.2
+      selector:
+        number:
+          min: 0.1
+          max: 0.5
+          step: 0.1
+          mode: slider
+    emergency_mode_chooser:
+      name: Emergency mode chooser (Optional)
+      description:
+        Whether to enable / disable the emergency mode of this automation.
+        The emergency mode will turn off the trv if either the temperature sensor
+        is unavailable or the calibration entity is unavailable.
+      default: false
+      selector:
+        boolean: {}
+    emergency_mode_indicator:
+      name: Emergency mode indicator (Optional)
+      description:
+        An input boolean which is set when the automation detects an emergency
+        mode.
+      default:
+      selector:
+        entity:
+          domain:
+            - input_boolean
+          multiple: false
+    overheat_protection:
+      name: Overheating Protection
+      description: Whether to enable / disable the overheating protection.
+      default: false
+      selector:
+        boolean: {}
+mode: restart
+trigger:
+  - platform: state
+    entity_id: !input trv
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 0
+    id: trv_changed
+  - platform: state
+    entity_id: !input temperature_sensor
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 0
+    id: temp_changed
+  - platform: state
+    entity_id:
+      - !input emergency_mode_indicator
+    from: "on"
+    to: "off"
+    id: emergency_off
+
+variables:
+  trv: !input trv
+  trv_calibration_number: !input trv_calibration_number
+  temperature_sensor: !input temperature_sensor
+  accuracy: !input accuracy
+  emergency_mode_chooser: !input emergency_mode_chooser
+  emergency_mode_indicator: !input emergency_mode_indicator
+  overheat_protection: !input overheat_protection
+action:
+  - if:
+      - condition: trigger
+        id:
+          - emergency_off
+    then:
+      - service: climate.set_hvac_mode
+        entity_id: !input trv
+        data:
+          hvac_mode: "heat"
+      - service: notify.notify_telegrams
+        data:
+          message: Der Heizungs-Notfallmodus von {{ state_attr(trv, 'friendly_name')}} wurde deaktiviert. Heizung wird eingeschaltet.
+          title: Heizungsfehler vermutlich behoben
+  - if:
+      - condition: template
+        value_template:
+          '{{ emergency_mode_chooser and (state_attr(trv, "current_temperature")
+          == None or states(trv_calibration_number) == "unavailable"
+          or states(trv_calibration_number) == "unknown"
+          or states(temperature_sensor) == "unavailable"
+          or states(temperature_sensor) == "unknown")}}'
+    then:
+      - service: climate.set_hvac_mode
+        entity_id: !input trv
+        data:
+          hvac_mode: "off"
+      - service: input_boolean.turn_on
+        target:
+          entity_id: !input emergency_mode_indicator
+      - service: notify.notify_telegrams
+        data:
+          message: Die Heizung {{ state_attr(trv, 'friendly_name')}} wurde aufgrund eines Fehlers ausgeschaltet. Bitte manuell überprüfen und den Notfallmodus händisch deaktivieren.
+          title: Heizungsfehler
+  - if:
+      - condition: template
+        value_template: '{{ emergency_mode_chooser and states(emergency_mode_indicator)== "on"}}' #there still is an emergency
+    then:
+      - service: notify.notify_telegrams
+        data:
+          message: Heizungs-Notfallmodus von {{ state_attr(trv, 'friendly_name')}} immer noch aktiv. Keine Änderungen vorgenommen. Bitte manuell überprüfen und den Notfallmodus händisch deaktivieren.
+          title: Heizungsfehler
+    else:
+      - variables:
+          new_offset: #yes this is somehow ugly
+            "{% set room_temperature = states(temperature_sensor) | float %}
+            {% set trv_temperature = state_attr(trv, \"current_temperature\") | float(0)
+            %}\n{% set trv_calibration = states(trv_calibration_number) | float %} {%
+            set trv_calibration_min = state_attr(trv_calibration_number, \"min\") | float(-5)
+            %} {% set trv_calibration_max = state_attr(trv_calibration_number, \"max\")
+            | float(5) %} {% set trv_calibration_step = state_attr(trv_calibration_number,
+            \"step\") | float(1) %}\n{% set step = trv_calibration_step | string %}\n{%
+            if step.split(\".\") | length > 1 -%}\n  {% set trv_calibration_step_decimals
+            = step.split(\".\")[1] | length %}\n{%- else -%}\n  {% set trv_calibration_step_decimals
+            = 0 %}\n{%- endif %}\n\n{% set new_trv_calibration = room_temperature - trv_temperature
+            + trv_calibration %} {% set new_trv_calibration_bounded = [ [ (new_trv_calibration
+            - new_trv_calibration % trv_calibration_step) | round(trv_calibration_step_decimals),
+            trv_calibration_min ] | max, trv_calibration_max ] | min %}\n{% if new_trv_calibration_bounded
+            < trv_calibration - trv_calibration_step or trv_calibration + trv_calibration_step
+            < new_trv_calibration_bounded -%}\n  {{ new_trv_calibration_bounded }}\n{%-
+            else -%}\n  {{ states(trv_calibration_number) }}\n{%- endif %}"
+
+          new_offset_overheat: '{% set offset = new_offset + 2| float %}
+            {% if offset > state_attr(trv_calibration_number, "max") %}
+            {% set offset = state_attr(trv_calibration_number, "max") %}
+            {% elif offset < state_attr(trv_calibration_number, "min") %}
+            {% set offset = state_attr(trv_calibration_number, "min") %}
+            {% else %}
+            {% set offset = offset %}
+            {% endif %}
+            {{ offset | float }}'
+      - if: #normal calibration, no anti-overheat mode
+          - condition: trigger
+            id:
+              - temp_changed
+              - trv_changed
+          - condition: template
+            value_template: #accuracy
+              "{{ (states(trv_calibration_number) | float - new_offset | float)
+              | abs | round(2) > accuracy }}"
+          - condition: template #make sure that the temperature is below the target temp (no overheat protection)
+            value_template: '{{ (states(temperature_sensor) | float) <= (state_attr(trv, "temperature")) }}' #check if current_temp <= target_temp
+        then:
+          - delay:
+              hours: 0
+              minutes: 0
+              seconds: 30
+          - service: number.set_value
+            target:
+              entity_id: !input trv_calibration_number
+            data:
+              value: "{{new_offset}}"
+      - if: # anti-overheat mode
+          - condition: template
+            value_template: "{{ overheat_protection }}" #user enabled overheat_protection
+          - condition: trigger
+            id:
+              - temp_changed
+              - trv_changed
+          - condition: template
+            value_template:
+              "{{ (states(trv_calibration_number) | float - (new_offset + 2) | float)
+              | abs | round(2) > accuracy }}"
+          - condition: template #make sure that the temperature is above the target temp (overheat protection)
+            value_template: '{{ (states(temperature_sensor) | float) > (state_attr(trv, "temperature") | float )}}' #check if current_temp > target_temp
+        then:
+          - delay:
+              hours: 0
+              minutes: 0
+              seconds: 30
+          - service: number.set_value
+            target:
+              entity_id: !input trv_calibration_number
+            data:
+              value: "{{new_offset_overheat}}"
