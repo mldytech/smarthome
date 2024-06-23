@@ -1,0 +1,133 @@
+blueprint:
+  name: Window and emergency detection
+  description: TBD
+  domain: automation
+  source_url: https://mldytech.org
+
+  input:
+    trv:
+      name: Thermostat
+      selector:
+        entity:
+          domain:
+            - climate
+          multiple: false
+    window_sensor:
+      name: Window / Door Sensor Group
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - input_boolean
+          multiple: false
+    window_on_delay:
+      name: Window / Door Sensor ON-Delay
+      description:
+        Time the sensor needs to stay the same after change to trigger
+        the automation. This is done to avoid retriggering. (Default = 5s)
+      default: 5
+      selector:
+        number:
+          mode: box
+          min: 0.0
+          max: 3600.0
+          unit_of_measurement: seconds
+          step: 1.0
+    window_off_delay:
+      name: Window / Door Sensor OFF-Delay
+      description:
+        Time the sensor needs to stay the same after change to trigger
+        the automation. This is done to avoid retriggering. (Default = 5s)
+      default: 5
+      selector:
+        number:
+          mode: box
+          min: 0.0
+          max: 3600.0
+          unit_of_measurement: seconds
+          step: 1.0
+    emergency_mode_chooser:
+      name: Emergency mode chooser (Optional)
+      description:
+        Whether to enable / disable the emergency mode of this automation.
+        The emergency mode will turn off the trv if either the temperature sensor
+        is unavailable or the calibration entity is unavailable.
+      default: false
+      selector:
+        boolean: {}
+    emergency_mode_indicator:
+      name: Emergency mode indicator (Optional)
+      description:
+        An input boolean which is set when the automation detects an emergency
+        mode.
+      default:
+      selector:
+        entity:
+          domain:
+            - input_boolean
+          multiple: false
+mode: restart
+trigger:
+  - platform: state
+    entity_id: !input window_sensor
+    to: "off"
+    from: "on"
+    for: !input window_on_delay
+    id: window_off
+  - platform: state
+    entity_id: !input window_sensor
+    to: "on"
+    from: "off"
+    for: !input window_off_delay
+    id: window_on
+variables:
+  trv: !input trv
+  emergency_mode_chooser: !input emergency_mode_chooser
+  emergency_mode_indicator: !input emergency_mode_indicator
+action:
+  - if:
+      - condition: template
+        value_template: '{{ emergency_mode_chooser and states(emergency_mode_indicator) == "on" }}' #there is an emergency
+    then:
+      - service: climate.set_hvac_mode
+        entity_id: !input trv
+        data:
+          hvac_mode: "off" 
+      - service: notify.notify_telegrams
+        data:
+          message: Heizungs-Notfallmodus von {{ state_attr(trv, 'friendly_name')}} immer noch aktiv. Das Schließen / Öffnen des Fensters hat den Zustand nicht verändert.
+          title: Heizungsfehler
+    else:
+      - if:
+          - condition: trigger
+            id:
+              - window_on
+        then:
+          - service: climate.set_hvac_mode
+            data:
+              hvac_mode: "off"
+            entity_id: !input trv
+          - delay:
+              hours: 0
+              minutes: 1
+              seconds: 0
+              milliseconds: 0
+          - if:
+              - condition: state
+                entity_id: !input trv
+                state: heat
+            then:
+              - service: notify.notify_telegrams
+                metadata: {}
+                data:
+                  message: Die Heizung {{ state_attr(trv, 'friendly_name')}} ist trotz offenem Fenster noch an. Es wird versucht das Problem zu beheben. Es sollte manuell geprüft werden ob die Heizung wirklich aus ist.
+                  title: Achtung
+      - if:
+          - condition: trigger
+            id:
+              - window_off
+        then:
+          - service: climate.set_hvac_mode
+            data:
+              hvac_mode: heat
+            entity_id: !input trv
