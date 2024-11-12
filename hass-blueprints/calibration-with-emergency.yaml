@@ -1,6 +1,6 @@
 blueprint:
   name: TRV Calibration utility with optional emergency and overheat protection.
-  description: Notice - Notifcation channel is hardcoded right now (notify_telegrams)
+  description: Automation to calibrate TRV's with an offset (via. user defined accuracy). Optional overheat-protection which add's 2 degrees to the trv temperature when the target temperature is reached, such that the trv turns off immediately.
   domain: automation
   source_url: https://github.com/mldytech/smarthome/blob/main/hass-blueprints/calibration-with-emergency.yaml
   input:
@@ -22,7 +22,7 @@ blueprint:
             - temperature
           multiple: false
     trv_calibration_number:
-      name: Thermostat Calibration entity
+      name: Thermostat Calibration entity (offset)
       description: If this does not exist, your trv might not support this function.
       selector:
         entity:
@@ -34,7 +34,7 @@ blueprint:
     accuracy:
       name: Accuracy of the calibration
       description:
-        The accuracy of the calibration - the max. allowed temperature
+        The accuracy of the calibration == the max. allowed temperature
         difference before adapting the calibration. Note that setting a lower value
         means more traffic to the TRV and therefore worse battery life. Recommended
         is a value of 0.2.
@@ -67,7 +67,7 @@ blueprint:
           multiple: false
     overheat_protection:
       name: Overheating Protection
-      description: Whether to enable / disable the overheating protection.
+      description: Whether to enable / disable the overheating protection (if the target temperature is reached, the trv temperature will be increased such that it turns off immediately)
       default: false
       selector:
         boolean: {}
@@ -103,7 +103,7 @@ variables:
   emergency_mode_indicator: !input emergency_mode_indicator
   overheat_protection: !input overheat_protection
 action:
-  - if:
+  - if: #turn the trv back on after an emergency
       - condition: trigger
         id:
           - emergency_off
@@ -114,9 +114,9 @@ action:
           hvac_mode: "heat"
       - service: notify.notify_telegrams
         data:
-          message: Der Heizungs-Notfallmodus von {{ state_attr(trv, 'friendly_name')}} wurde deaktiviert. Heizung wird eingeschaltet.
-          title: Heizungsfehler vermutlich behoben
-  - if:
+          message: The TRV emergency mode of {{ state_attr(trv, 'friendly_name')}} was deactivated. TRV turns on.
+          title: TRV-Error resolved
+  - if: #set emergency mode, turn trv off and notify, if any of the used entities is unavailable (e.g. the trv itself or the temperature sensor)
       - condition: template
         value_template:
           '{{ emergency_mode_chooser and (state_attr(trv, "current_temperature")
@@ -134,19 +134,19 @@ action:
           entity_id: !input emergency_mode_indicator
       - service: notify.notify_telegrams
         data:
-          message: Die Heizung {{ state_attr(trv, 'friendly_name')}} wurde aufgrund eines Fehlers ausgeschaltet. Bitte manuell überprüfen und den Notfallmodus händisch deaktivieren.
-          title: Heizungsfehler
-  - if:
+          message: TRV {{ state_attr(trv, 'friendly_name')}} was turned off due to an error. Please check manually and deactivate the emergency mode manually.
+          title: TRV-Error
+  - if: #continue to notify while the emergency mode is on
       - condition: template
         value_template: '{{ emergency_mode_chooser and states(emergency_mode_indicator)== "on"}}' #there still is an emergency
     then:
       - service: notify.notify_telegrams
         data:
-          message: Heizungs-Notfallmodus von {{ state_attr(trv, 'friendly_name')}} immer noch aktiv. Keine Änderungen vorgenommen. Bitte manuell überprüfen und den Notfallmodus händisch deaktivieren.
-          title: Heizungsfehler
+          message: TRV Emergency of {{ state_attr(trv, 'friendly_name')}} still active. No changed were made. Please check manually and deactivate the emergency mode manually.
+          title: TRV-Error still active
     else:
       - variables:
-          new_offset: #yes this is somehow ugly
+          new_offset: #yes this is somehow ugly but works(it wasnt me :))
             "{% set room_temperature = states(temperature_sensor) | float %}
             {% set trv_temperature = state_attr(trv, \"current_temperature\") | float(0)
             %}\n{% set trv_calibration = states(trv_calibration_number) | float %} {%
@@ -173,7 +173,7 @@ action:
             {% set offset = offset %}
             {% endif %}
             {{ offset | float }}'
-      - if: #normal calibration, no anti-overheat mode
+      - if: #normal calibration, no overheat protection
           - condition: trigger
             id:
               - temp_changed
@@ -182,7 +182,7 @@ action:
             value_template: #accuracy
               "{{ (states(trv_calibration_number) | float - new_offset | float)
               | abs | round(2) > accuracy }}"
-          - condition: template #make sure that the temperature is below the target temp (no overheat protection)
+          - condition: template #only trigger if the temperature is below the target temperature (depends on accuracy)
             value_template: '{{ (states(temperature_sensor) | float) <= (state_attr(trv, "temperature")) }}' #check if current_temp <= target_temp
         then:
           - delay:
@@ -196,7 +196,7 @@ action:
               value: "{{new_offset}}"
       - if: # anti-overheat mode
           - condition: template
-            value_template: "{{ overheat_protection }}" #user enabled overheat_protection
+            value_template: "{{ overheat_protection }}" #user enabled overheat protection
           - condition: trigger
             id:
               - temp_changed
@@ -205,7 +205,7 @@ action:
             value_template:
               "{{ (states(trv_calibration_number) | float - (new_offset + 2) | float)
               | abs | round(2) > accuracy }}"
-          - condition: template #make sure that the temperature is above the target temp (overheat protection)
+          - condition: template #only trigger if the temperature is above the target temperature
             value_template: '{{ (states(temperature_sensor) | float) > (state_attr(trv, "temperature") | float )}}' #check if current_temp > target_temp
         then:
           - delay:
@@ -216,4 +216,4 @@ action:
             target:
               entity_id: !input trv_calibration_number
             data:
-              value: "{{new_offset_overheat}}"
+              value: "{{new_offset_overheat}}" #increase temp by 2 degrees
