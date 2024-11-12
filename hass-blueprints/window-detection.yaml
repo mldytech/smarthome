@@ -1,6 +1,6 @@
 blueprint:
   name: Window and emergency detection
-  description: TBD
+  description: Automation to switch the TRV on or off depending on the window state. Optionally, the TRV can be automatically turned off when an emergency indicator is set.
   domain: automation
   source_url: https://github.com/mldytech/smarthome/blob/main/hass-blueprints/window-detection.yaml
 
@@ -23,9 +23,8 @@ blueprint:
     window_on_delay:
       name: Window / Door Sensor ON-Delay
       description:
-        Time the sensor needs to stay the same after change to trigger
-        the automation. This is done to avoid retriggering. (Default = 5s)
-      default: 5
+        Time in seconds after which the TRV turns on again if the window was closed.
+      default: 120
       selector:
         number:
           mode: box
@@ -36,8 +35,7 @@ blueprint:
     window_off_delay:
       name: Window / Door Sensor OFF-Delay
       description:
-        Time the sensor needs to stay the same after change to trigger
-        the automation. This is done to avoid retriggering. (Default = 5s)
+        Time in seconds after which the TRV turns off if the window was opened
       default: 5
       selector:
         number:
@@ -51,7 +49,7 @@ blueprint:
       description:
         Whether to enable / disable the emergency mode of this automation.
         The emergency mode will turn off the trv if either the temperature sensor
-        is unavailable or the calibration entity is unavailable.
+        is unavailable or the calibration entity is unavailable (triggered through calibration automation)
       default: false
       selector:
         boolean: {}
@@ -87,16 +85,16 @@ variables:
 action:
   - if:
       - condition: template
-        value_template: '{{ emergency_mode_chooser and states(emergency_mode_indicator) == "on" }}' #there is an emergency
+        value_template: '{{ emergency_mode_chooser and states(emergency_mode_indicator) == "on" }}' #there is an emergency (emergency is e.g. set through calibration automation)
     then:
       - service: climate.set_hvac_mode
         entity_id: !input trv
         data:
           hvac_mode: "off" 
-      - service: notify.notify_telegrams
+      - service: notify.notify_telegrams #TODO: Notify channel as input variable
         data:
-          message: Heizungs-Notfallmodus von {{ state_attr(trv, 'friendly_name')}} immer noch aktiv. Das Schließen / Öffnen des Fensters hat den Zustand nicht verändert.
-          title: Heizungsfehler
+          message: TRV-Emergency of {{ state_attr(trv, 'friendly_name')}} still active. Closing / Opening the window didn't change the state.
+          title: TRV-Error
     else:
       - if:
           - condition: trigger
@@ -112,7 +110,7 @@ action:
               minutes: 1
               seconds: 0
               milliseconds: 0
-          - if:
+          - if: #notify if the trv didn't change it's state after 1 min
               - condition: state
                 entity_id: !input trv
                 state: heat
@@ -120,8 +118,8 @@ action:
               - service: notify.notify_telegrams
                 metadata: {}
                 data:
-                  message: Die Heizung {{ state_attr(trv, 'friendly_name')}} ist trotz offenem Fenster noch an. Es wird versucht das Problem zu beheben. Es sollte manuell geprüft werden ob die Heizung wirklich aus ist.
-                  title: Achtung
+                  message: TRV {{ state_attr(trv, 'friendly_name')}} is still heating although the window is open. An attempt is made to resolve the problem. It should be checked manually.
+                  title: Caution
       - if:
           - condition: trigger
             id:
