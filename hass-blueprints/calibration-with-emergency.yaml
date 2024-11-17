@@ -182,8 +182,6 @@ action:
             value_template: #accuracy
               "{{ (states(trv_calibration_number) | float - new_offset | float)
               | abs | round(2) > accuracy }}"
-          - condition: template #only trigger if the temperature is below the target temperature (depends on accuracy)
-            value_template: '{{ (states(temperature_sensor) | float) <= (state_attr(trv, "temperature")) }}' #check if current_temp <= target_temp
         then:
           - delay:
               hours: 0
@@ -205,8 +203,6 @@ action:
             value_template:
               "{{ (states(trv_calibration_number) | float - (new_offset + 2) | float)
               | abs | round(2) > accuracy }}"
-          - condition: template #only trigger if the temperature is above the target temperature
-            value_template: '{{ (states(temperature_sensor) | float) > (state_attr(trv, "temperature") | float )}}' #check if current_temp > target_temp
         then:
           - delay:
               hours: 0
